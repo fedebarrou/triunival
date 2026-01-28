@@ -1,8 +1,8 @@
 // src/core.js
 // Core de validación (usable en backend y frontend)
 
-import { normalizeRules } from './rules.js';
-import { generateFormHTML } from './formGenerator.js';
+import { normalizeRules } from "./rules.js";
+import { generateFormHTML } from "./formGenerator.js";
 
 /**
  * Valida un objeto `data` contra reglas.
@@ -24,7 +24,7 @@ export async function validate(data = {}, rules = {}) {
 
     // 1) required
     if (normalized.required && isEmpty(value)) {
-      errors[field] = 'Obligatorio';
+      errors[field] = "Obligatorio";
       return;
     }
 
@@ -33,15 +33,15 @@ export async function validate(data = {}, rules = {}) {
 
     // 2) tipo/email/url/number
     if (normalized.email && !isEmail(String(value))) {
-      errors[field] = 'Email inválido';
+      errors[field] = "Email inválido";
       return;
     }
     if (normalized.url && !isUrl(String(value))) {
-      errors[field] = 'URL inválida';
+      errors[field] = "URL inválida";
       return;
     }
     if (normalized.number && !isNumeric(String(value))) {
-      errors[field] = 'Debe ser un número';
+      errors[field] = "Debe ser un número";
       return;
     }
 
@@ -67,20 +67,21 @@ export async function validate(data = {}, rules = {}) {
 
     // 5) pattern
     if (normalized.pattern) {
-      const re = normalized.pattern instanceof RegExp
-        ? normalized.pattern
-        : new RegExp(String(normalized.pattern));
+      const re =
+        normalized.pattern instanceof RegExp
+          ? normalized.pattern
+          : new RegExp(String(normalized.pattern));
       if (!re.test(String(value))) {
-        errors[field] = 'Formato inválido';
+        errors[field] = "Formato inválido";
         return;
       }
     }
 
     // 6) custom async validate (solo formato objeto)
-    if (typeof normalized.validate === 'function') {
+    if (typeof normalized.validate === "function") {
       const customMsg = await normalized.validate(value, data);
-      if (typeof customMsg === 'string') errors[field] = customMsg;
-      else if (customMsg === false) errors[field] = 'Inválido';
+      if (typeof customMsg === "string") errors[field] = customMsg;
+      else if (customMsg === false) errors[field] = "Inválido";
     }
   });
 
@@ -92,37 +93,81 @@ export async function validate(data = {}, rules = {}) {
  * UniVal (backwards compatible)
  *
  * - Mantiene `render()` y `initAutomanage()` para navegador.
- * - En vez de embebido, usa el core `validate()`.
+ * - Usa el core `validate()`.
  *
- * Nota: esta clase usa DOM/fetch en métodos específicos. En backend,
- * importá y usá `validate()` directamente.
+ * ✅ Adaptado para:
+ * - HTML legacy: <span id="error-campo" class="error-msg">
+ * - HTML pro:    <span data-error-for="campo" class="...">
+ * - options.form.id (form pro)
  */
 export class UniVal {
   constructor(schema) {
     this.schema = schema;
     this.formElement = null;
+
+    // compat default
+    this.formId = "unival-generated-form";
+
+    // clase a aplicar a inputs con error (legacy)
+    this.inputErrorClass = "unival-input-error";
   }
 
+  /**
+   * Render legacy: usa generateFormHTML()
+   * Si querés el modo pro (FormGenerator + HtmlAdapter), podés ignorar esto.
+   */
   render(options = {}, containerId = null) {
-    const html = generateFormHTML(this.schema, options);
-    if (containerId && typeof document !== 'undefined') {
+    // soporte: options.form.id (modo pro), options.formId (legacy), fallback default
+    const nextFormId =
+      options?.form?.id || options?.formId || options?.id || this.formId || "unival-generated-form";
+    this.formId = nextFormId;
+
+    const html = generateFormHTML(this.schema, {
+      ...options,
+      formId: nextFormId,
+      // por si alguien usa options.form también acá
+      action: options?.form?.action ?? options?.action,
+      method: options?.form?.method ?? options?.method,
+      className: options?.form?.className ?? options?.className,
+      submitText: options?.submit?.text ?? options?.submitText,
+    });
+
+    if (containerId && typeof document !== "undefined") {
       const el = document.getElementById(containerId);
       if (el) {
         el.innerHTML = html;
-        this.initAutomanage();
+        this.initAutomanage(undefined, undefined, { formId: nextFormId });
       }
     }
+
     return html;
   }
 
-  initAutomanage(onSuccess, onError) {
-    if (typeof document === 'undefined') return;
+  /**
+   * Automanage:
+   * - valida en cliente
+   * - si pasa, hace fetch al action del form
+   * - pinta errores inline (legacy + pro)
+   *
+   * Soporta options.formId o options.form.id
+   */
+  initAutomanage(onSuccess, onError, options = {}) {
+    if (typeof document === "undefined") return;
 
-    const form = document.getElementById('unival-generated-form');
+    const nextFormId =
+      options?.form?.id || options?.formId || this.formId || "unival-generated-form";
+    this.formId = nextFormId;
+
+    const form =
+      document.getElementById(nextFormId) ||
+      // fallback por si el usuario no pasa id
+      document.querySelector("form");
+
     if (!form) return;
+
     this.formElement = form;
 
-    form.addEventListener('submit', async (e) => {
+    form.addEventListener("submit", async (e) => {
       e.preventDefault();
 
       this._clearErrors();
@@ -140,11 +185,11 @@ export class UniVal {
       try {
         const response = await fetch(form.action, {
           method: form.method,
-          headers: { 'Content-Type': 'application/json' },
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify(data),
         });
 
-        const apiResult = await response.json();
+        const apiResult = await response.json().catch(() => ({}));
 
         if (!response.ok) {
           if (apiResult?.errors) this._showErrors(apiResult.errors);
@@ -153,7 +198,7 @@ export class UniVal {
           if (onSuccess) onSuccess(apiResult);
         }
       } catch (err) {
-        console.error('Error de red o servidor:', err);
+        console.error("Error de red o servidor:", err);
         if (onError) onError(err);
       }
     });
@@ -164,26 +209,48 @@ export class UniVal {
   }
 
   _showErrors(errors) {
-    if (typeof document === 'undefined') return;
+    if (typeof document === "undefined") return;
+
     for (const field in errors) {
-      const errorSpan = document.getElementById(`error-${field}`);
-      const input = document.getElementById(field);
-      if (errorSpan) errorSpan.innerText = errors[field];
-      if (input) input.classList.add('unival-input-error');
+      const msg = errors[field];
+
+      // 1) Legacy: <span id="error-field">
+      const legacySpan = document.getElementById(`error-${field}`);
+
+      // 2) Pro: <span data-error-for="field">
+      const dataSpan = document.querySelector(`[data-error-for="${cssEscape(field)}"]`);
+
+      const span = legacySpan || dataSpan;
+      if (span) span.innerText = msg;
+
+      // input element (id="field" o name="field")
+      const input =
+        document.getElementById(field) ||
+        document.querySelector(`[name="${cssEscape(field)}"]`);
+
+      if (input) input.classList.add(this.inputErrorClass);
     }
   }
 
   _clearErrors() {
-    if (typeof document === 'undefined') return;
-    const spans = document.querySelectorAll('.error-msg');
-    const inputs = document.querySelectorAll('input');
-    spans.forEach((s) => (s.innerText = ''));
-    inputs.forEach((i) => i.classList.remove('unival-input-error'));
+    if (typeof document === "undefined") return;
+
+    // Limpia legacy + pro
+    const spans = [
+      ...document.querySelectorAll(".error-msg"),
+      ...document.querySelectorAll("[data-error-for]"),
+    ];
+
+    spans.forEach((s) => (s.innerText = ""));
+
+    // No asumas solo input
+    const controls = document.querySelectorAll("input, select, textarea");
+    controls.forEach((el) => el.classList.remove(this.inputErrorClass));
   }
 }
 
 function isEmpty(v) {
-  return v === null || v === undefined || String(v).trim() === '';
+  return v === null || v === undefined || String(v).trim() === "";
 }
 
 function isEmail(s) {
@@ -200,6 +267,14 @@ function isUrl(s) {
 }
 
 function isNumeric(s) {
-  if (s.trim() === '') return false;
+  if (s.trim() === "") return false;
   return Number.isFinite(Number(s));
+}
+
+/**
+ * Escape mínimo para usar nombres de campo en querySelector.
+ * (CSS.escape no está garantizado en todos los entornos)
+ */
+function cssEscape(str) {
+  return String(str).replace(/["\\]/g, "\\$&");
 }

@@ -1,17 +1,29 @@
 {
   "name": "triunival",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Validación unificada para HTML, JS y Backend",
-  "main": "index.js",
   "type": "module",
+  "exports": {
+    ".": "./src/index.js",
+    "./core": "./src/core.js",
+    "./formGenerator": "./src/formGenerator.js",
+    "./htmlAdapter": "./src/htmlAdapter.js",
+    "./rules": "./src/rules.js"
+  },
+  "main": "./src/index.js",
+  "files": [
+    "src"
+  ],
   "scripts": {
-    "test": "node test.js"
+    "test": "node src/test.js"
   },
   "keywords": [
     "validation",
     "form",
     "fullstack",
-    "isomorphic"
+    "isomorphic",
+    "frontend",
+    "backend"
   ],
   "author": "Federico Barroumeres",
   "license": "MIT"

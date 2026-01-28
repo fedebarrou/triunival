@@ -1,14 +1,23 @@
 // src/index.js
 
+import { UniVal, validate } from "./core.js";
+import { FormGenerator, generateFormHTML } from "./formGenerator.js";
+import { HtmlAdapter, toHtmlAttributes } from "./htmlAdapter.js";
+import { normalizeRules } from "./rules.js";
+
 // Default export (backwards compatible)
-export { UniVal as default, UniVal } from './core.js';
+export default UniVal;
 
-// Core
-export { validate } from './core.js';
+// Named exports (modern usage)
+export { UniVal, validate, FormGenerator, generateFormHTML, HtmlAdapter, toHtmlAttributes, normalizeRules };
 
-// Generator + Adapters
-export { FormGenerator, generateFormHTML } from './formGenerator.js';
-export { HtmlAdapter, toHtmlAttributes } from './htmlAdapter.js';
-
-// Utils
-export { normalizeRules } from './rules.js';
+// Namespace-style export (opcional, no rompe nada)
+export const Triunival = {
+  validate,
+  UniVal,
+  FormGenerator,
+  generateFormHTML,
+  HtmlAdapter,
+  toHtmlAttributes,
+  normalizeRules,
+};

@@ -1,10 +1,9 @@
 // src/htmlAdapter.js
 
-import { normalizeRules } from './rules.js';
+import { normalizeRules } from "./rules.js";
 
 /**
- * Transforma las reglas de validación en atributos estándar de HTML5.
- * Esto permite que el navegador valide antes de que JS siquiera actúe.
+ * Transforma reglas de validación a atributos HTML5 (UX, no seguridad).
  */
 export const toHtmlAttributes = (rules) => {
   const r = normalizeRules(rules);
@@ -13,13 +12,14 @@ export const toHtmlAttributes = (rules) => {
   // Mapeo de tipos
   if (r.type) {
     const typeMap = {
-      email: 'email',
-      password: 'password',
-      number: 'number',
-      url: 'url',
-      date: 'date'
+      email: "email",
+      password: "password",
+      number: "number",
+      url: "url",
+      date: "date",
+      text: "text",
     };
-    attrs.type = typeMap[r.type] || 'text';
+    attrs.type = typeMap[r.type] || "text";
   }
 
   // Restricciones de presencia y longitud
@@ -31,58 +31,208 @@ export const toHtmlAttributes = (rules) => {
   if (r.minValue !== undefined) attrs.min = r.minValue;
   if (r.maxValue !== undefined) attrs.max = r.maxValue;
 
-  // Validación por expresión regular (RegExp)
+  // pattern
   if (r.pattern) {
-    attrs.pattern = r.pattern instanceof RegExp
-      ? r.pattern.source
-      : r.pattern;
+    attrs.pattern = r.pattern instanceof RegExp ? r.pattern.source : r.pattern;
   }
 
   return attrs;
 };
 
 /**
- * HtmlAdapter (nuevo): renderiza un schema normalizado a HTML.
+ * HtmlAdapter (PRO):
+ * - respeta options.form, options.submit, options.classes
+ * - soporta item.ui por campo
+ * - soporta escape hatch: ui.render(field, ctx) => string
  *
- * Firma esperada por FormGenerator:
- *   HtmlAdapter.renderForm(schema, options)
+ * Compatibilidad:
+ * - Siempre imprime class "error-msg" en el span de error (legacy)
+ * - También imprime data-error-for="field" (nuevo)
  */
 export class HtmlAdapter {
   static renderForm(schema, options = {}) {
-    const { action = '#', method = 'POST', submitText = 'Enviar', className = 'unival-form' } = options;
+    const form = options?.form || {};
+    const submit = options?.submit || {};
+    const classes = options?.classes || {};
 
-    let fieldsHTML = '';
+    const formId = form.id || "unival-generated-form"; // compat default
+    const action = form.action ?? "#";
+    const method = (form.method ?? "POST").toUpperCase();
+    const formClass = form.className ?? "unival-form";
+    const formAttrs = objectToHtmlAttrs(form.attrs || {});
 
+    let fieldsHTML = "";
+
+    // schema es un objeto: { [name]: fieldDef }
     for (const fieldName in schema) {
-      const rules = schema[fieldName];
-      const r = normalizeRules(rules);
-      const attrs = objectToHtmlAttrs(toHtmlAttributes(r));
-      const label = r.label || fieldName.charAt(0).toUpperCase() + fieldName.slice(1);
+      const field = schema[fieldName] || {};
+      fieldsHTML += this.renderField(fieldName, field, options);
+    }
 
-      fieldsHTML += `
-        <div class="field-group">
-          <label for="${fieldName}">${label}</label>
-          <input name="${fieldName}" id="${fieldName}" ${attrs}>
-          <span class="error-msg" id="error-${fieldName}"></span>
+    const submitHTML = this.renderSubmit(options);
+
+    return `
+      <form id="${escapeHtml(formId)}"
+            action="${escapeHtml(action)}"
+            method="${escapeHtml(method)}"
+            class="${escapeHtml(formClass)}"
+            ${formAttrs}>
+        ${fieldsHTML}
+        ${submitHTML}
+      </form>
+    `;
+  }
+
+  static renderField(fieldName, field, options = {}) {
+    const classes = options?.classes || {};
+    const r = normalizeRules(field);
+
+    // Escape hatch por campo (UX total sin adapter nuevo)
+    // ui.render(field, ctx) => string
+    if (field?.ui?.render && typeof field.ui.render === "function") {
+      return String(
+        field.ui.render(
+          { name: fieldName, ...field, ...r },
+          {
+            options,
+            toHtmlAttributes,
+            objectToHtmlAttrs,
+            escapeHtml,
+          }
+        ) ?? ""
+      );
+    }
+
+    const label = field.label || r.label || prettifyName(fieldName);
+
+    // clases: options + overrides por campo
+    const groupClass = cx(classes.fieldGroup, field.ui?.wrapperClass, field.className);
+    const labelClass = cx(classes.label, field.ui?.labelClass);
+    const inputClass = cx(classes.input, field.ui?.inputClass);
+    const hintClass = cx(classes.hint, field.ui?.hintClass);
+
+    // 👇 clave: base class estable + custom
+    const errorClass = cx("error-msg", classes.error, field.ui?.errorClass);
+
+    // attrs HTML base desde rules
+    const attrsObj = {
+      ...toHtmlAttributes(r),
+      id: field.id || fieldName,
+      name: fieldName,
+      placeholder: field.placeholder || "",
+      ...(field.attrs && typeof field.attrs === "object" ? field.attrs : {}),
+    };
+
+    // Precedencia de type: config.type > rules.type
+    if (field.type) attrsObj.type = field.type;
+
+    const variant = field.ui?.variant || "default";
+
+    // Permitir distintos controles a futuro (sin romper API)
+    const controlTag = (field.ui?.control || field.control || "input").toLowerCase();
+    const controlHTML = renderControl(controlTag, attrsObj, inputClass);
+
+    if (variant === "floating") {
+      return `
+        <div class="${escapeHtml(groupClass)}" data-variant="floating">
+          <div class="floating-wrap">
+            ${controlHTML}
+            <label class="${escapeHtml(labelClass)}" for="${escapeHtml(attrsObj.id)}">${escapeHtml(
+        label
+      )}</label>
+          </div>
+          ${this.renderHint(field, hintClass)}
+          <span class="${escapeHtml(errorClass)}" data-error-for="${escapeHtml(fieldName)}"></span>
         </div>
       `;
     }
 
     return `
-      <form action="${action}" method="${method}" class="${className}" id="unival-generated-form">
-        ${fieldsHTML}
-        <button type="submit">${submitText}</button>
-      </form>
+      <div class="${escapeHtml(groupClass)}">
+        ${label
+        ? `<label class="${escapeHtml(labelClass)}" for="${escapeHtml(attrsObj.id)}">${escapeHtml(
+          label
+        )}</label>`
+        : ""
+      }
+        ${controlHTML}
+        ${this.renderHint(field, hintClass)}
+        <span class="${escapeHtml(errorClass)}" data-error-for="${escapeHtml(fieldName)}"></span>
+      </div>
     `;
   }
+
+  static renderHint(field, hintClass) {
+    const hint = field?.ui?.hint || field?.hint;
+    if (!hint) return "";
+    return `<div class="${escapeHtml(hintClass || "hint")}">${escapeHtml(String(hint))}</div>`;
+  }
+
+  static renderSubmit(options = {}) {
+    const submit = options?.submit || {};
+    const text = submit.text || "Enviar";
+    const className = submit.className || "";
+    const attrs = objectToHtmlAttrs(submit.attrs || {});
+    return `<button type="submit" class="${escapeHtml(className)}" ${attrs}>${escapeHtml(
+      text
+    )}</button>`;
+  }
+}
+
+// ---------------------------
+// helpers
+// ---------------------------
+
+function renderControl(tag, attrsObj, inputClass) {
+  const attrs = objectToHtmlAttrs(attrsObj);
+  const cls = inputClass ? `class="${escapeHtml(inputClass)}"` : "";
+
+  if (tag === "textarea") {
+    // placeholder va como atributo, value no
+    return `<textarea ${cls} ${attrs}></textarea>`;
+  }
+
+  if (tag === "select") {
+    // Si querés options en el futuro: field.ui.options, etc.
+    // Acá dejándolo neutro (sin options) para no inventar contrato.
+    return `<select ${cls} ${attrs}></select>`;
+  }
+
+  // default: input
+  return `<input ${cls} ${attrs} />`;
 }
 
 function objectToHtmlAttrs(attrs) {
   return Object.entries(attrs)
     .map(([key, value]) => {
-      if (value === true) return key;
-      if (value === undefined || value === false) return '';
-      return `${key}="${value}"`;
+      if (value === true) return escapeHtml(key);
+      if (value === undefined || value === false || value === null) return "";
+      return `${escapeHtml(key)}="${escapeHtml(String(value))}"`;
     })
-    .join(' ');
+    .filter(Boolean)
+    .join(" ");
+}
+
+function prettifyName(name) {
+  return String(name)
+    .replace(/[_-]+/g, " ")
+    .replace(/\b\w/g, (m) => m.toUpperCase());
+}
+
+function cx(...parts) {
+  return parts
+    .flat()
+    .filter(Boolean)
+    .map((x) => String(x).trim())
+    .filter(Boolean)
+    .join(" ");
+}
+
+function escapeHtml(str) {
+  return String(str)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
 }
