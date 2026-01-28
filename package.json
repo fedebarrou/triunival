@@ -1,6 +1,6 @@
 {
   "name": "triunival",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Validación unificada para HTML, JS y Backend",
   "main": "index.js",
   "type": "module",
